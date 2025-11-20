@@ -1,399 +1,261 @@
-# main.py
-import tkinter as tk
-from tkinter import messagebox
-import sys
+# board.py
+import random
+from collections import deque
 
-from board import Board
-from game_logic import Game
-from file_manager import FileManager
+class Board:
+    def __init__(self, rows, cols, mines, seed=None, grid=None, revealed=None, flagged=None):
+        self.rows = rows
+        self.cols = cols
+        self.mines = mines
+        self.seed = seed
+        self.grid = grid
+        self.revealed = revealed
+        self.flagged = set(flagged) if flagged else set()
+        self.mine_set = set()
+        if self.grid is None or self.revealed is None:
+            self._init_empty()
+        self.placed = False
 
-DEFAULT_ROWS, DEFAULT_COLS, DEFAULT_MINES = 9, 9, 15
-PRESETS = {"Easy": (9, 9, 10), "Normal": (16, 16, 40), "Hard": (16, 30, 99)}
+    def _init_empty(self):
+        self.grid = [["0" for _ in range(self.cols)] for _ in range(self.rows)]
+        self.revealed = [[False for _ in range(self.cols)] for _ in range(self.rows)]
 
-
-class BoardUI:
-    def __init__(self, root, player_name_cb):
-        self.root = root
-        self.player_name_cb = player_name_cb
-        self.btns = {}
-        self._timer_job = None
-        self._elapsed_fn = None
-        self._cell_font = ("Helvetica", 12, "bold")
-        self.num_color = {
-            "1": "#0000FF", "2": "#008000", "3": "#FF0000",
-            "4": "#000080", "5": "#800000", "6": "#008B8B",
-            "7": "#000000", "8": "#808080"
-        }
-
-    def build(self, rows, cols, mines):
-        self.rows, self.cols, self.mines = rows, cols, mines
-        for w in list(self.root.grid_slaves()):
-            w.grid_forget()
-
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=0)
-        self.root.rowconfigure(1, weight=1)
-        self.root.rowconfigure(2, weight=0)
-
-        hdr = tk.Frame(self.root)
-        hdr.grid(row=0, column=0, pady=(6, 2))
-        stats_font = ("Arial", 12, "bold")
-        self.lbl_time = tk.Label(hdr, text="Time: 0s", font=stats_font)
-        self.lbl_time.pack(side="left", padx=(4, 8))
-        self.lbl_flags = tk.Label(hdr, text=f"Flags: 0/{mines}", font=stats_font)
-        self.lbl_flags.pack(side="left", padx=(0, 8))
-        self.lbl_clicks = tk.Label(hdr, text="Clicks: 0", font=stats_font)
-        self.lbl_clicks.pack(side="left", padx=(0, 4))
-
-        center = tk.Frame(self.root)
-        center.grid(row=1, column=0)
-        holder = tk.Frame(center)
-        holder.grid(row=0, column=0)
-
-        gridf = tk.Frame(holder)
-        gridf.grid(row=0, column=0)
-        self.btns = {}
-
-        gap = 1
-        for r in range(rows):
-            gridf.rowconfigure(r, weight=0)
-            for c in range(cols):
-                gridf.columnconfigure(c, weight=0)
-                b = tk.Button(
-                    gridf,
-                    text="",
-                    width=2,
-                    height=1,
-                    relief="raised",
-                    bd=2,
-                    bg="#e9e9e9",
-                    activebackground="#e9e9e9",
-                    font=self._cell_font
-                )
-                b.grid(row=r, column=c, padx=gap, pady=gap, ipadx=0, ipady=0)
-                b.bind("<Button-1>", lambda ev, rr=r, cc=c: self._on_left(rr, cc))
-                b.bind("<Button-3>", lambda ev, rr=r, cc=c: self._on_right(rr, cc))
-                b.bind("<Button-2>", lambda ev, rr=r, cc=c: self._on_middle(rr, cc))
-                b.bind("<Control-Button-1>", lambda ev, rr=r, cc=c: self._on_right(rr, cc))
-                b.config(disabledforeground="black")
-                self.btns[(r, c)] = b
-
-        ctrl = tk.Frame(self.root)
-        ctrl.grid(row=2, column=0, pady=(6, 6))
-        tk.Button(ctrl, text="Save", width=10, command=lambda: self._on_save()).pack(side="left", padx=6)
-
-    def bind(self, game):
-        self._game = game
-
-    def get_player_name(self):
-        return self.player_name_cb()
-
-    def _on_left(self, r, c):
-        if hasattr(self, "_game"): self._game.on_left(r, c)
-
-    def _on_right(self, r, c):
-        if hasattr(self, "_game"): self._game.on_right(r, c)
-
-    def _on_middle(self, r, c):
-        if hasattr(self, "_game"): self._game.on_middle(r, c)
-
-    def reveal_cell(self, r, c, val):
-        b = self.btns.get((r, c))
-        if not b: return
-        b.config(relief="sunken", state="disabled")
-        if val == "M":
-            b.config(text="M", fg="black", bg="#ff4d4d", disabledforeground="black")
-        elif val == "0":
-            b.config(text="", bg="#dff7f9")
+    def place_mines(self, fixed_seed=None):
+        if fixed_seed is not None:
+            self.seed = int(fixed_seed)
+            random.seed(self.seed)
+        elif self.seed is not None:
+            random.seed(int(self.seed))
         else:
-            color = self.num_color.get(str(val), "black")
-            b.config(text=str(val), fg=color, disabledforeground=color, bg="#dff7f9")
+            self.seed = random.randint(0, 10**9)
+            random.seed(self.seed)
 
-    def reveal_mine(self, r, c):
-        self.reveal_cell(r, c, "M")
+        self._init_empty()
+        self.flagged = set()
+        total = self.rows * self.cols
+        positions = random.sample(range(total), self.mines)
+        self.mine_set = set()
+        for idx in positions:
+            r, c = divmod(idx, self.cols)
+            self.mine_set.add((r, c))
+            self.grid[r][c] = "M"
 
-    def set_flag(self, r, c, flagged):
-        b = self.btns.get((r, c))
-        if not b: return
-        if flagged:
-            b.config(text="F", fg="#C00000", bg="#FFF3D9", state="normal")
+        self._compute_numbers()
+        if len(self.mine_set) != self.mines:
+            remaining = [p for p in range(total) if (p // self.cols, p % self.cols) not in self.mine_set]
+            while len(self.mine_set) < self.mines and remaining:
+                p = random.choice(remaining)
+                remaining.remove(p)
+                rr, cc = divmod(p, self.cols)
+                self.mine_set.add((rr, cc))
+                self.grid[rr][cc] = "M"
+            self._compute_numbers()
+        return self.seed
+
+    def place_mines_avoiding(self, avoid_cell):
+        if self.seed is not None:
+            random.seed(int(self.seed))
         else:
-            b.config(text="", fg="black", bg="#e9e9e9", state="normal")
+            self.seed = random.randint(0, 10**9)
+            random.seed(self.seed)
 
-    def update_counters(self, flagged_count, mines):
-        self.lbl_flags.config(text=f"Flags: {flagged_count}/{mines}")
+        self._init_empty()
+        self.flagged = set()
 
-    def start_timer(self, elapsed_fn):
-        self._elapsed_fn = elapsed_fn
-        self._tick()
+        ar, ac = avoid_cell
+        banned = set()
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                nr, nc = ar + i, ac + j
+                if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                    banned.add(nr * self.cols + nc)
 
-    def _tick(self):
-        if not self._elapsed_fn:
-            return
-        self.lbl_time.config(text=f"Time: {self._elapsed_fn()}s")
-        self._timer_job = self.root.after(1000, self._tick)
+        total = self.rows * self.cols
+        allowed = [p for p in range(total) if p not in banned]
 
-    def set_timer(self, val):
-        self.lbl_time.config(text=f"Time: {int(val)}s")
+        if len(allowed) < self.mines:
+            allowed = [p for p in range(total) if p != (ar * self.cols + ac)]
 
-    def set_clicks(self, n):
-        self.lbl_clicks.config(text=f"Clicks: {n}")
-
-    def close(self):
-        try:
-            if getattr(self, "_timer_job", None):
-                self.root.after_cancel(self._timer_job)
-            self.root.destroy()
-        except Exception:
-            pass
-
-    def _on_save(self):
-        if hasattr(self, "_game"):
-            self._game.save_prompt()
-
-
-# ---------- App flow ----------
-def start_game(rows, cols, mines, name, fm, slot_data=None, slot_index=None):
-    """
-    slot_index: optional int 1..3 — if provided, the game is loaded from that slot and the
-                slot file will be deleted automatically when the user finishes the game.
-    """
-    game_root = tk.Tk()
-    game_root.title("Minesweeper")
-    game_root.resizable(False, False)
-
-    ui = BoardUI(game_root, lambda: name)
-
-    if slot_data is None:
-        board = Board(rows, cols, mines)
-    else:
-        board = Board(
-            slot_data["rows"],
-            slot_data["cols"],
-            slot_data["mines"],
-            seed=slot_data.get("seed"),
-            grid=slot_data.get("grid"),
-            revealed=slot_data.get("revealed"),
-            flagged=slot_data.get("flagged")
-        )
-
-    def post_game_cb(result, elapsed, clicks, _unused):
-        e3bv = board.compute_e3bv(first_click=getattr(game, "first_click", None))
-        title = "Victory!" if result == "win" else "Game Over"
-        msg = f"{'You won!' if result == 'win' else 'You lost!'}\nTime: {elapsed}s\nClicks: {clicks}\ne3BV: {e3bv}\n\nGo to main menu? (Yes → main menu, No → exit)"
-        res = messagebox.askyesno(title, msg, parent=game_root)
-        try:
-            game_root.destroy()
-        except Exception:
-            pass
-        if res:
-            main_menu(prefill_name=name)
+        positions = set()
+        if len(allowed) >= self.mines:
+            positions = set(random.sample(allowed, self.mines))
         else:
-            sys.exit(0)
+            candidates = [p for p in range(total) if p != (ar * self.cols + ac)]
+            while len(positions) < self.mines and candidates:
+                p = random.choice(candidates)
+                candidates.remove(p)
+                positions.add(p)
 
-    game = Game(board, fm, ui, post_game_cb)
+        self.mine_set = set()
+        for idx in positions:
+            r, c = divmod(idx, self.cols)
+            self.mine_set.add((r, c))
+            self.grid[r][c] = "M"
 
-    # If game loaded from a slot, mark it so it can be cleared on finish
-    if slot_index is not None:
-        game.current_save_slot = slot_index
+        if (ar, ac) in self.mine_set:
+            self.mine_set.remove((ar, ac))
+            self.grid[ar][ac] = "0"
+            total_positions = set(range(self.rows * self.cols))
+            remaining = list(total_positions - set(idx for idx in (p[0]*self.cols + p[1] for p in self.mine_set)) - {ar * self.cols + ac})
+            if remaining:
+                pick = random.choice(remaining)
+                rr, cc = divmod(pick, self.cols)
+                self.mine_set.add((rr, cc))
+                self.grid[rr][cc] = "M"
 
-    ui.build(board.rows, board.cols, board.mines)
-    ui.bind(game)
+        self._compute_numbers()
+        if len(self.mine_set) != self.mines:
+            total_positions = [(p // self.cols, p % self.cols) for p in range(self.rows * self.cols)]
+            for (rr, cc) in total_positions:
+                if len(self.mine_set) >= self.mines:
+                    break
+                if (rr, cc) not in self.mine_set and not (rr == ar and cc == ac):
+                    self.mine_set.add((rr, cc))
+                    self.grid[rr][cc] = "M"
+            while len(self.mine_set) > self.mines:
+                rem = next(iter(self.mine_set))
+                if rem == (ar, ac):
+                    break
+                self.mine_set.remove(rem)
+                self.grid[rem[0]][rem[1]] = "0"
+            self._compute_numbers()
 
-    # restore slot data if provided
-    if slot_data is not None:
-        ui.set_timer(slot_data.get("elapsed", 0))
-        for r in range(board.rows):
-            for c in range(board.cols):
-                if board.revealed[r][c]:
-                    ui.reveal_cell(r, c, board.grid[r][c])
-        for (r, c) in sorted(board.flagged):
-            ui.set_flag(r, c, True)
+        return self.seed
 
-    # Protocol for window close: ask to save rather than directly closing unsaved
-    def on_close():
-        if game.game_over:
-            try:
-                ui.close()
-            except Exception:
-                pass
-            try:
-                game_root.destroy()
-            except Exception:
-                pass
-            return
+    def _compute_numbers(self):
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if (r, c) in self.mine_set:
+                    self.grid[r][c] = "M"
+                    continue
+                cnt = 0
+                for i in range(-1, 2):
+                    for j in range(-1, 2):
+                        if i == 0 and j == 0:
+                            continue
+                        nr, nc = r + i, c + j
+                        if 0 <= nr < self.rows and 0 <= nc < self.cols and (nr, nc) in self.mine_set:
+                            cnt += 1
+                self.grid[r][c] = str(cnt)
 
-        ans = messagebox.askyesnocancel("Exit", "Save game before exiting?\nYes = Save & Exit\nNo = Exit without saving\nCancel = Return to game", parent=game_root)
-        if ans is None:
-            # Cancel => do nothing
-            return
-        if ans is True:
-            # Save (synchronous prompt) then exit
-            game.save_prompt()  # blocks until user closes save prompt (see game_logic.save_prompt implementation)
-            try:
-                ui.close()
-            except Exception:
-                pass
-            try:
-                game_root.destroy()
-            except Exception:
-                pass
-            return
+    def reveal(self, r, c):
+        if self.revealed[r][c] or (r, c) in self.flagged:
+            return []
+        revealed_cells = []
+        if self.grid[r][c] == "0":
+            stack = [(r, c)]
+            while stack:
+                cr, cc = stack.pop()
+                if self.revealed[cr][cc]:
+                    continue
+                self.revealed[cr][cc] = True
+                revealed_cells.append((cr, cc, self.grid[cr][cc]))
+                if self.grid[cr][cc] == "0":
+                    for i in range(-1, 2):
+                        for j in range(-1, 2):
+                            nr, nc = cr + i, cc + j
+                            if 0 <= nr < self.rows and 0 <= nc < self.cols and not self.revealed[nr][nc]:
+                                stack.append((nr, nc))
         else:
-            # No -> exit without saving
-            try:
-                ui.close()
-            except Exception:
-                pass
-            try:
-                game_root.destroy()
-            except Exception:
-                pass
-            return
+            self.revealed[r][c] = True
+            revealed_cells.append((r, c, self.grid[r][c]))
+        return revealed_cells
 
-    game_root.protocol("WM_DELETE_WINDOW", on_close)
-
-    game.start(resume=(slot_data is not None), elapsed_before=(slot_data.get("elapsed", 0) if slot_data else 0))
-    game_root.mainloop()
-
-
-def main_menu(prefill_name=None):
-    fm = FileManager()
-    win = tk.Tk()
-    win.title("Minesweeper - Menu")
-
-    container = tk.Frame(win)
-    container.pack()
-
-    tk.Label(container, text="Minesweeper", font=("Arial", 18, "bold")).grid(row=0, column=0, pady=(12, 8))
-
-    form = tk.Frame(container)
-    form.grid(row=1, column=0, pady=(2, 8))
-
-    tk.Label(form, text="Name:", width=8, anchor="e").grid(row=0, column=0, padx=6, pady=4)
-    entry_name = tk.Entry(form, width=18)
-    entry_name.grid(row=0, column=1, padx=6, pady=4)
-    if prefill_name:
-        entry_name.insert(0, prefill_name)
-    else:
-        entry_name.insert(0, "Player1")
-
-    tk.Label(form, text="Rows:", width=8, anchor="e").grid(row=1, column=0, padx=6, pady=2)
-    entry_rows = tk.Entry(form, width=6)
-    entry_rows.grid(row=1, column=1, padx=6, pady=2)
-    entry_rows.insert(0, str(DEFAULT_ROWS))
-
-    tk.Label(form, text="Cols:", width=8, anchor="e").grid(row=2, column=0, padx=6, pady=2)
-    entry_cols = tk.Entry(form, width=6)
-    entry_cols.grid(row=2, column=1, padx=6, pady=2)
-    entry_cols.insert(0, str(DEFAULT_COLS))
-
-    tk.Label(form, text="Mines:", width=8, anchor="e").grid(row=3, column=0, padx=6, pady=2)
-    entry_mines = tk.Entry(form, width=6)
-    entry_mines.grid(row=3, column=1, padx=6, pady=2)
-    entry_mines.insert(0, str(DEFAULT_MINES))
-
-    def valid_name():
-        n = entry_name.get().strip()
-        if not n:
-            messagebox.showerror("Missing name", "Please enter your name.")
+    def toggle_flag(self, r, c):
+        if self.revealed[r][c]:
             return None
-        return n
+        if (r, c) in self.flagged:
+            self.flagged.remove((r, c))
+            return False
+        else:
+            self.flagged.add((r, c))
+            return True
 
-    def start_custom():
-        n = valid_name()
-        if not n:
-            return
-        if not (entry_rows.get().isdigit() and entry_cols.get().isdigit() and entry_mines.get().isdigit()):
-            messagebox.showerror("Error", "Row/Column/Mine values must be numeric.")
-            return
-        r = int(entry_rows.get()); c = int(entry_cols.get()); m = int(entry_mines.get())
-        if m >= r * c:
-            messagebox.showerror("Error", "Too many mines for this board.")
-            return
-        win.destroy()
-        start_game(r, c, m, n, fm)
+    def check_win(self):
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if (r, c) not in self.mine_set and not self.revealed[r][c]:
+                    return False
+        return True
 
-    def start_default():
-        n = valid_name()
-        if not n:
-            return
-        win.destroy()
-        start_game(DEFAULT_ROWS, DEFAULT_COLS, DEFAULT_MINES, n, fm)
+    def reveal_all_mines(self):
+        return [(r, c, "M") for (r, c) in self.mine_set]
 
-    btns = tk.Frame(container)
-    btns.grid(row=2, column=0, pady=(4, 6))
-    tk.Button(btns, text="Start (Custom)", width=16, command=start_custom).grid(row=0, column=0, padx=8)
-    tk.Button(btns, text="Default (9×9, 15)", width=16, command=start_default).grid(row=0, column=1, padx=8)
+    def _reveal_simulation(self, start):
+        sr, sc = start
+        seen = set()
+        if (sr, sc) in self.mine_set:
+            return seen
+        if self.grid[sr][sc] != "0":
+            seen.add((sr, sc))
+            return seen
+        q = deque()
+        q.append((sr, sc))
+        seen.add((sr, sc))
+        while q:
+            r, c = q.popleft()
+            if self.grid[r][c] == "0":
+                for i in range(-1, 2):
+                    for j in range(-1, 2):
+                        nr, nc = r + i, c + j
+                        if 0 <= nr < self.rows and 0 <= nc < self.cols and (nr, nc) not in seen:
+                            seen.add((nr, nc))
+                            if self.grid[nr][nc] == "0":
+                                q.append((nr, nc))
+        return seen
 
-    preset_label = tk.Label(container, text="Quick Presets:")
-    preset_label.grid(row=3, column=0, pady=(6, 4))
-    preset_frame = tk.Frame(container)
-    preset_frame.grid(row=4, column=0)
+    def compute_e3bv(self, first_click=None):
+        revealed_by_first = set()
+        if first_click is not None:
+            fr, fc = first_click
+            if 0 <= fr < self.rows and 0 <= fc < self.cols:
+                revealed_by_first = self._reveal_simulation(first_click)
 
-    def start_preset(preset_tuple):
-        n = valid_name()
-        if not n:
-            return
-        r, c, m = preset_tuple
-        win.destroy()
-        start_game(r, c, m, n, fm)
+        visited = set()
+        zero_regions = 0
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.grid[r][c] == "0" and (r, c) not in visited and (r, c) not in revealed_by_first:
+                    zero_regions += 1
+                    q = deque()
+                    q.append((r, c)); visited.add((r, c))
+                    while q:
+                        cr, cc = q.popleft()
+                        for i in range(-1, 2):
+                            for j in range(-1, 2):
+                                nr, nc = cr + i, cc + j
+                                if 0 <= nr < self.rows and 0 <= nc < self.cols and (nr, nc) not in visited and (nr, nc) not in revealed_by_first:
+                                    if self.grid[nr][nc] == "0":
+                                        visited.add((nr, nc))
+                                        q.append((nr, nc))
 
-    for i, (k, v) in enumerate(PRESETS.items()):
-        tk.Button(preset_frame, text=k, width=10, command=(lambda p=v: start_preset(p))).grid(row=0, column=i, padx=6)
+        zero_cells = set()
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.grid[r][c] == "0" and (r, c) not in revealed_by_first:
+                    zero_cells.add((r, c))
 
-    lower = tk.Frame(container)
-    lower.grid(row=5, column=0, pady=(6, 6))
-    tk.Button(lower, text="Load Slot", width=12, command=lambda: load_slot_prompt(win, fm, entry_name)).grid(row=0, column=0, padx=6)
-    tk.Button(lower, text="Leaderboard", width=12, command=lambda: fm.show_leaderboard(win)).grid(row=0, column=1, padx=6)
-    tk.Button(lower, text="Clear Scores", width=12, command=fm.clear_scores).grid(row=0, column=2, padx=6)
+        isolated_numbers = 0
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if (r, c) in self.mine_set:
+                    continue
+                if (r, c) in revealed_by_first:
+                    continue
+                if self.grid[r][c] == "0":
+                    continue
+                adj_to_zero = False
+                for i in range(-1, 2):
+                    for j in range(-1, 2):
+                        nr, nc = r + i, c + j
+                        if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                            if (nr, nc) in revealed_by_first or (nr, nc) in zero_cells:
+                                adj_to_zero = True
+                                break
+                    if adj_to_zero:
+                        break
+                if not adj_to_zero:
+                    isolated_numbers += 1
 
-    tk.Button(container, text="Exit", width=12, command=win.destroy).grid(row=6, column=0, pady=(6, 8))
-
-    info = tk.Label(
-        container,
-        text="e3BV = Effective 3BV\nMinimum number of clicks required to solve the board\nafter your first move — without using flags.",
-        font=("Arial", 9),
-        fg="#555555",
-        justify="center"
-    )
-    info.grid(row=7, column=0, pady=(4, 8))
-
-    win.update_idletasks()
-    w = win.winfo_reqwidth(); h = win.winfo_reqheight()
-    win.geometry(f"{w+6}x{h+6}")
-    win.resizable(False, False)
-
-    win.mainloop()
-
-
-def load_slot_prompt(win, fm, entry_widget):
-    n = entry_widget.get().strip()
-    if not n:
-        messagebox.showerror("Missing name", "Enter your name")
-        return
-    dlg = tk.Toplevel(win)
-    dlg.title("Load Slot")
-    tk.Label(dlg, text="Choose slot to load:").grid(row=0, column=0, columnspan=3, pady=6)
-
-    def do_load(slot):
-        if not fm.slot_exists(slot):
-            messagebox.showinfo("Load", f"Slot {slot} is empty.")
-            return
-        data = fm.read_slot(slot)
-        if data is None:
-            messagebox.showerror("Load", "Slot appears corrupted.")
-            return
-        dlg.destroy()
-        win.destroy()
-        # pass slot_index for automatic cleanup at game finish
-        start_game(data["rows"], data["cols"], data["mines"], n, fm, slot_data=data, slot_index=slot)
-
-    for i in range(1, 4):
-        status = "Empty" if not fm.slot_exists(i) else "Occupied"
-        tk.Button(dlg, text=f"Slot {i}\n({status})", width=12, command=lambda s=i: do_load(s)).grid(row=1, column=i - 1, padx=6, pady=6)
-
-
-if __name__ == "__main__":
-    main_menu()
-
+        e3bv = zero_regions + isolated_numbers
+        return e3bv
