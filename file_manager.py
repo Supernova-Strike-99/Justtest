@@ -1,246 +1,164 @@
 # file_manager.py
 import os
-import json
-import time
-from tkinter import messagebox, Toplevel, Frame, Label, Button, PhotoImage
-from tkinter import LEFT, RIGHT, BOTH, X, Y
-from tkinter import ttk
-
+from tkinter import messagebox, Toplevel, ttk, Frame, Label
+from tkinter import LEFT, RIGHT, BOTH, Y, VERTICAL, Scrollbar
 
 class FileManager:
-    def __init__(self, score_file="scores.csv", saves_dir="saves",
-                 profiles_file="profiles.json",
-                 logo_path="/mnt/data/8f15e2c1-1ecb-4efa-9f8b-999cb660c002.png"):
-
+    def __init__(self, score_file="scores.csv", saves_dir="saves"):
         self.score_file = score_file
         self.saves_dir = saves_dir
-        self.profiles_file = profiles_file
-        self.logo_path = logo_path
-
-        self.slot_files = [
-            os.path.join(self.saves_dir, f"slot{i}.txt")
-            for i in range(1, 4)
-        ]
-
         os.makedirs(self.saves_dir, exist_ok=True)
+        self.slot_files = [os.path.join(self.saves_dir, f"slot{i}.txt") for i in range(1, 4)]
 
-        if not os.path.exists(self.profiles_file):
-            with open(self.profiles_file, "w") as f:
-                json.dump([], f)
-
-    def save_score(self, name, elapsed, rows, cols, mines, result,
-                   clicks=None, seed=None):
-        seed_val = seed if seed is not None else "?"
-        clicks_val = clicks if clicks is not None else "?"
-        with open(self.score_file, "a") as f:
-            f.write(f"{name},{elapsed},{clicks_val},{rows},{cols},{mines},{result},{seed_val}\n")
-        if seed is not None:
-            try:
-                self.save_player_profile(name, seed)
-            except:
-                pass
+    def save_score(self, name, elapsed, rows, cols, mines, result, clicks=None, seed=None):
+        seed_val = "?" if seed is None else str(seed)
+        clicks_val = "?" if clicks is None else str(clicks)
+        try:
+            with open(self.score_file, "a") as f:
+                f.write(f"{name},{elapsed},{clicks_val},{rows},{cols},{mines},{result},{seed_val}\n")
+        except Exception:
+            pass
 
     def load_scores(self):
         if not os.path.exists(self.score_file):
             return []
         out = []
-        with open(self.score_file, "r") as f:
-            for line in f:
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) < 7:
-                    continue
-                out.append({
-                    "name": parts[0],
-                    "elapsed": parts[1],
-                    "clicks": parts[2],
-                    "rows": parts[3],
-                    "cols": parts[4],
-                    "mines": parts[5],
-                    "result": parts[6],
-                    "seed": parts[7] if len(parts) > 7 else "?",
-                })
+        try:
+            with open(self.score_file, "r") as f:
+                for line in f:
+                    parts = [p.strip() for p in line.strip().split(",")]
+                    if len(parts) < 7:
+                        continue
+                    name = parts[0]
+                    elapsed = parts[1] if len(parts) > 1 else "?"
+                    clicks = parts[2] if len(parts) > 2 else "?"
+                    rows = parts[3] if len(parts) > 3 else "?"
+                    cols = parts[4] if len(parts) > 4 else "?"
+                    mines = parts[5] if len(parts) > 5 else "?"
+                    result = parts[6] if len(parts) > 6 else "?"
+                    seed = parts[7] if len(parts) > 7 else "?"
+                    out.append({
+                        "name": name, "elapsed": elapsed, "clicks": clicks,
+                        "rows": rows, "cols": cols, "mines": mines, "result": result, "seed": seed
+                    })
+        except Exception:
+            return out
         return out
 
-    def _read_profiles(self):
-        try:
-            with open(self.profiles_file, "r") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except:
-            return []
-
-    def _write_profiles(self, profiles):
-        try:
-            with open(self.profiles_file, "w") as f:
-                json.dump(profiles, f)
-        except:
-            pass
-
-    def save_player_profile(self, name, seed):
-        name = name.strip()
-        if not name:
-            return
-        profiles = self._read_profiles()
-        now = int(time.time())
-        for p in profiles:
-            if p["name"] == name:
-                p["seed"] = seed
-                p["last_seen"] = now
-                self._write_profiles(profiles)
-                return
-        profiles.append({"name": name, "seed": seed, "last_seen": now})
-        profiles = sorted(profiles, key=lambda x: x["last_seen"], reverse=True)[:3]
-        self._write_profiles(profiles)
-
-    def get_profiles(self):
-        p = self._read_profiles()
-        return sorted(p, key=lambda x: x["last_seen"], reverse=True)
-
-    def show_personal_leaderboard(self, parent, player_name):
+    def show_leaderboard(self, parent):
+        """Global leaderboard: two tabs (Wins / Losses). Each tab lists one row per player
+           showing the most recent entry in that category. Clicking a row opens player's full
+           history filtered to that category."""
         scores = self.load_scores()
         if not scores:
-            messagebox.showinfo("Leaderboard", "No scores yet.")
+            messagebox.showinfo("Leaderboard", "No scores yet — be the first loser.")
             return
 
-        win = Toplevel(parent)
-        win.title("Leaderboard")
-        win.geometry("820x460")
+        # Build maps latest by player for wins and losses (scan oldest->newest)
+        latest_win = {}
+        latest_loss = {}
+        players = set()
+        for s in scores:
+            players.add(s["name"])
+            if s.get("result", "").lower() == "win":
+                latest_win[s["name"]] = s
+            elif s.get("result", "").lower() in ("lose", "loss"):
+                latest_loss[s["name"]] = s
 
-        top = Frame(win)
-        top.pack(fill=X, padx=8, pady=6)
-        Label(top, text="Leaderboard", font=("Arial", 14, "bold")).pack(side=LEFT)
+        wins_list = list(latest_win.values())
+        losses_list = list(latest_loss.values())
 
-        try:
-            if os.path.exists(self.logo_path):
-                img = PhotoImage(file=self.logo_path)
-                lbl = Label(top, image=img)
-                lbl.image = img
-                lbl.pack(side=RIGHT)
-        except:
-            pass
+        # Sort by elapsed ascending (fastest first) for nicer presentation
+        def timekey(e):
+            t = e.get("elapsed", "?")
+            return int(t) if isinstance(t, str) and t.isdigit() else (int(t) if isinstance(t, int) else 999999)
 
-        notebook = ttk.Notebook(win)
-        notebook.pack(fill=BOTH, expand=True, padx=10, pady=6)
+        wins_list.sort(key=timekey)
+        losses_list.sort(key=timekey)
 
-        cols = ("idx", "player", "result", "time", "clicks", "difficulty", "seed")
+        winw = Toplevel(parent)
+        winw.title("Leaderboard")
+        winw.geometry("760x420")
+        winw.minsize(520, 320)
 
-        def make_tab(title):
-            frame = Frame(notebook)
+        notebook = ttk.Notebook(winw)
+        notebook.pack(fill=BOTH, expand=True, padx=6, pady=6)
+
+        columns = ("player", "time", "difficulty", "clicks")
+        def create_tab(title, data_list, is_win_tab):
+            frame = ttk.Frame(notebook)
             notebook.add(frame, text=title)
-            tree_frame = Frame(frame)
-            tree_frame.pack(fill=BOTH, expand=True)
-            vsb = ttk.Scrollbar(tree_frame, orient="vertical")
-            tree = ttk.Treeview(tree_frame, columns=cols, show="headings", yscrollcommand=vsb.set)
-            vsb.config(command=tree.yview)
+
+            tree = ttk.Treeview(frame, columns=columns, show="headings")
+            tree.heading("player", text="Player")
+            tree.heading("time", text="Time (s)")
+            tree.heading("difficulty", text="Difficulty [rowsxcols,mines]")
+            tree.heading("clicks", text="Clicks")
+
+            tree.column("player", width=220, anchor="w")
+            tree.column("time", width=80, anchor="center")
+            tree.column("difficulty", width=320, anchor="center")
+            tree.column("clicks", width=80, anchor="center")
+
+            vsb = Scrollbar(frame, orient=VERTICAL, command=tree.yview)
+            tree.configure(yscrollcommand=vsb.set)
             vsb.pack(side=RIGHT, fill=Y)
             tree.pack(side=LEFT, fill=BOTH, expand=True)
-            tree._tab_type = title.lower()
-            tree.heading("idx", text="#"); tree.heading("player", text="Player"); tree.heading("result", text="Result")
-            tree.heading("time", text="Time (s)"); tree.heading("clicks", text="Clicks"); tree.heading("difficulty", text="Difficulty")
-            tree.heading("seed", text="Seed")
-            tree.column("idx", width=40, anchor="center"); tree.column("player", width=160, anchor="w")
-            tree.column("result", width=80, anchor="center"); tree.column("time", width=80, anchor="center")
-            tree.column("clicks", width=80, anchor="center"); tree.column("difficulty", width=160, anchor="center")
-            tree.column("seed", width=100, anchor="center")
 
-            def on_double(event, tv=tree):
-                iid = tv.identify_row(event.y)
-                if not iid:
+            # Insert a row per player (their most recent entry for this category)
+            for idx, s in enumerate(data_list):
+                name = s["name"]
+                t = s.get("elapsed", "?")
+                diff = f"[{s.get('rows','?')}x{s.get('cols','?')},{s.get('mines','?')}]"
+                clicks = s.get("clicks", "?")
+                iid = f"{title}_{idx}_{name}"
+                tree.insert("", "end", iid=iid, values=(name, t, diff, clicks))
+
+            # Click handler: open that player's full history filtered by category
+            def on_click(event):
+                row = tree.identify_row(event.y)
+                if not row:
                     return
-                # robustly get player name from the 'player' column (returns string)
-                player = tv.set(iid, "player")
-                self._show_full_history(win, scores, player, tv._tab_type)
+                player = tree.item(row, "values")[0]
+                # Filter scores for this player and this category
+                cat = "win" if is_win_tab else "lose"
+                hist = [h for h in scores if h["name"] == player and h.get("result","").lower() == cat]
+                if not hist:
+                    messagebox.showinfo("History", f"No {cat}s found for {player}.")
+                    return
+                hist.sort(key=lambda h: int(h["elapsed"]) if isinstance(h.get("elapsed"), str) and h["elapsed"].isdigit() else 999999)
+                hw = Toplevel(winw)
+                hw.title(f"{player} — {title} history")
+                hw.geometry("620x320")
+                tree2 = ttk.Treeview(hw, columns=("idx", "time", "clicks", "difficulty", "seed"), show="headings")
+                tree2.heading("idx", text="#")
+                tree2.heading("time", text="Time(s)")
+                tree2.heading("clicks", text="Clicks")
+                tree2.heading("difficulty", text="Difficulty")
+                tree2.heading("seed", text="Seed")
+                tree2.column("idx", width=40, anchor="center")
+                tree2.column("time", width=80, anchor="center")
+                tree2.column("clicks", width=80, anchor="center")
+                tree2.column("difficulty", width=300, anchor="w")
+                tree2.column("seed", width=80, anchor="center")
+                tree2.pack(fill=BOTH, expand=True, padx=8, pady=8)
+                for i, h in enumerate(hist, start=1):
+                    diff = f"[{h.get('rows','?')}x{h.get('cols','?')},{h.get('mines','?')}]"
+                    tree2.insert("", "end", values=(i, h.get("elapsed","?"), h.get("clicks","?"), diff, h.get("seed","?")))
+                hw.transient(winw); hw.grab_set(); hw.focus_force(); hw.update_idletasks()
 
-            tree.bind("<Double-1>", on_double)
+            tree.bind("<ButtonRelease-1>", on_click)
             return tree
 
-        tree_win = make_tab("Wins")
-        tree_loss = make_tab("Losses")
+        create_tab("Wins", wins_list, is_win_tab=True)
+        create_tab("Losses", losses_list, is_win_tab=False)
 
-        wins = [s for s in scores if (s.get("result") or "").lower() == "win"]
-        losses = [s for s in scores if (s.get("result") or "").lower() in ("lose", "loss")]
-        wins = list(reversed(wins)); losses = list(reversed(losses))
+        winw.transient(parent)
+        winw.grab_set()
+        winw.focus_force()
+        winw.update_idletasks()
 
-        def dedupe_most_recent(entries):
-            seen = set(); unique = []
-            for s in entries:
-                pname = (s.get("name","") or "").strip().lower()
-                if not pname: continue
-                if pname in seen: continue
-                seen.add(pname); unique.append(s)
-            return unique
-
-        unique_wins = dedupe_most_recent(wins)
-        unique_losses = dedupe_most_recent(losses)
-
-        def insert_rows(tree, data):
-            for idx, s in enumerate(data, start=1):
-                diff = f"[{s.get('rows','?')}x{s.get('cols','?')},{s.get('mines','?')}]"
-                tree.insert("", "end", values=(idx, s.get("name","?"), s.get("result","?"),
-                                               s.get("elapsed","?"), s.get("clicks","?"), diff, s.get("seed","?")))
-
-        insert_rows(tree_win, unique_wins)
-        insert_rows(tree_loss, unique_losses)
-
-    def _show_full_history(self, parent, scores, player, mode):
-        pname = str(player or "").strip().lower()
-        if not pname:
-            messagebox.showinfo("History", "Invalid player.")
-            return
-
-        if mode == "wins":
-            hist = [x for x in scores if x.get("name","").strip().lower()==pname and (x.get("result") or "").lower()=="win"]
-            title_suffix = " — Wins"
-        elif mode == "losses":
-            hist = [x for x in scores if x.get("name","").strip().lower()==pname and (x.get("result") or "").lower() in ("lose","loss")]
-            title_suffix = " — Losses"
-        else:
-            hist = [x for x in scores if x.get("name","").strip().lower()==pname]
-            title_suffix = " — Full History"
-
-        if not hist:
-            messagebox.showinfo("History", "No matching history for this player in this tab.")
-            return
-
-        def timekey(h):
-            t = h.get("elapsed","?")
-            return int(t) if str(t).isdigit() else 999999
-        hist.sort(key=timekey)
-
-        fastest_elapsed = None
-        for h in hist:
-            t = h.get("elapsed","?")
-            if str(t).isdigit():
-                val = int(t)
-                if fastest_elapsed is None or val < fastest_elapsed:
-                    fastest_elapsed = val
-
-        hw = Toplevel(parent)
-        hw.title(f"{player}{title_suffix}")
-        hw.geometry("720x360")
-        tree = ttk.Treeview(hw, columns=("idx","result","time","clicks","diff","seed"), show="headings")
-        tree.heading("idx", text="#"); tree.heading("result", text="Result"); tree.heading("time", text="Time (s)")
-        tree.heading("clicks", text="Clicks"); tree.heading("diff", text="Difficulty"); tree.heading("seed", text="Seed")
-        tree.column("idx", width=40, anchor="center"); tree.column("result", width=80, anchor="center")
-        tree.column("time", width=80, anchor="center"); tree.column("clicks", width=80, anchor="center")
-        tree.column("diff", width=360, anchor="w"); tree.column("seed", width=120, anchor="center")
-
-        tree.tag_configure("fastest", background="#e6ffe6")
-        tree.pack(fill=BOTH, expand=True, padx=8, pady=8)
-        for i,h in enumerate(hist, start=1):
-            diff = f"[{h.get('rows','?')}x{h.get('cols','?')},{h.get('mines','?')}]"
-            elapsed_val = h.get("elapsed","?")
-            tag = ()
-            try:
-                if fastest_elapsed is not None and str(elapsed_val).isdigit() and int(elapsed_val) == fastest_elapsed:
-                    tag = ("fastest",)
-            except Exception:
-                tag = ()
-            tree.insert("", "end", values=(i, h.get("result","?"), elapsed_val, h.get("clicks","?"), diff, h.get("seed","?")), tags=tag)
-
-        hw.transient(parent); hw.grab_set(); hw.focus_force(); hw.update_idletasks()
-
-    # slot helpers unchanged
+    # slot operations (same as before)
     def write_slot(self, slot, board_obj, elapsed):
         path = self.slot_files[slot - 1]
         seed_val = board_obj.seed if board_obj.seed is not None else 0
@@ -267,11 +185,7 @@ class FileManager:
         if len(header) != 3 or not all(h.isdigit() for h in header):
             return None
         rows, cols, mines = map(int, header)
-        if not lines[1].lstrip("-").isdigit():
-            return None
         elapsed = int(lines[1])
-        if not lines[2].lstrip("-").isdigit():
-            return None
         seed = int(lines[2])
         if len(lines) < 3 + rows + rows:
             return None
@@ -286,16 +200,7 @@ class FileManager:
                     pr, pc = pair.split(",")
                     if pr.lstrip("-").isdigit() and pc.lstrip("-").isdigit():
                         flagged.add((int(pr), int(pc)))
-        return {
-            "rows": rows,
-            "cols": cols,
-            "mines": mines,
-            "grid": grid,
-            "revealed": revealed,
-            "flagged": flagged,
-            "elapsed": elapsed,
-            "seed": seed
-        }
+        return {"rows": rows, "cols": cols, "mines": mines, "grid": grid, "revealed": revealed, "flagged": flagged, "elapsed": elapsed, "seed": seed}
 
     def slot_exists(self, slot):
         return os.path.exists(self.slot_files[slot - 1])
@@ -312,8 +217,8 @@ class FileManager:
 
     def clear_scores(self):
         if os.path.exists(self.score_file):
-            if messagebox.askyesno("Confirm", "Clear ALL scores?"):
+            if messagebox.askyesno("Confirm", "Clear leaderboard?"):
                 os.remove(self.score_file)
-                messagebox.showinfo("Done", "Scores deleted.")
+                messagebox.showinfo("Done", "Leaderboard cleared.")
         else:
             messagebox.showinfo("Info", "Leaderboard already empty.")
